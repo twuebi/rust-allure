@@ -1,4 +1,4 @@
-use crate::{Attachment, TestResultBuilder};
+use crate::{Attachment, Message};
 use http::HeaderMap;
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next, Result};
@@ -7,10 +7,12 @@ use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use task_local_extensions::Extensions;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 pub struct LoggingMiddleware {
     allure_dir: PathBuf,
+    tx: UnboundedSender<Message>,
 }
 
 #[async_trait::async_trait]
@@ -21,33 +23,27 @@ impl Middleware for LoggingMiddleware {
         extensions: &mut Extensions,
         next: Next<'_>,
     ) -> Result<Response> {
-        self.log_request(&req, extensions).await;
+        self.log_request(&req).await;
 
         let res = next.run(req, extensions).await?;
         let (body, headers, response) = Self::prepare_response_copy(res).await?;
 
-        self.log_response(extensions, headers, body).await?;
+        self.log_response(headers, body).await?;
 
-        Ok(response.into())
+        Ok(response)
     }
 }
 
 impl LoggingMiddleware {
-    pub fn new(allure_dir: PathBuf) -> Self {
+    pub async fn new(allure_dir: PathBuf, tx: UnboundedSender<Message>) -> Self {
         if !allure_dir.exists() {
-            std::fs::create_dir(&allure_dir).unwrap();
+            tokio::fs::create_dir_all(&allure_dir).await.unwrap();
         }
-        Self { allure_dir }
+        Self { allure_dir, tx }
     }
 
-    async fn add_attachment(
-        &self,
-        name: &str,
-        mime: Mime,
-        content: Vec<u8>,
-        extensions: &mut Extensions,
-    ) {
-        let of_name = format!("{}-attachment.{}", Uuid::new_v4(), mime.to_ext())
+    async fn add_attachment(&self, name: &str, mime: Mime, content: Vec<u8>) {
+        let of_name = format!("{}-attachment.{}", Uuid::new_v4(), mime.as_ext())
             .try_into()
             .unwrap();
         let mut of = self.allure_dir.clone();
@@ -56,16 +52,15 @@ impl LoggingMiddleware {
         tokio::fs::write(of, &content).await.unwrap();
 
         {
-            let ext: Option<&mut TestResultBuilder> = extensions.get_mut();
-            if let Some(ext) = ext {
-                ext.current_step().map(|step| {
-                    step.attachments.push(Attachment {
-                        name: name.to_string(),
-                        source: of_name,
-                        r#type: mime.to_string(),
-                    })
-                });
-            };
+            eprintln!("sending attachment");
+            let send_result = self.tx.send(Message::AddAttachment(Attachment {
+                name: name.to_string(),
+                source: of_name,
+                r#type: mime.to_string(),
+            }));
+            if let Err(err) = send_result {
+                eprintln!("{:?}", err);
+            }
         }
     }
 
@@ -80,12 +75,7 @@ impl LoggingMiddleware {
         Ok((body, headers, response.into()))
     }
 
-    async fn log_response(
-        &self,
-        extensions: &mut Extensions,
-        headers: HeaderMap,
-        body: bytes::Bytes,
-    ) -> Result<()> {
+    async fn log_response(&self, headers: HeaderMap, body: bytes::Bytes) -> Result<()> {
         let headers = headers
             .iter()
             .map(|(k, v)| format!("{}: {}", k, String::from_utf8_lossy(v.as_bytes())))
@@ -99,21 +89,23 @@ impl LoggingMiddleware {
 
         let mut buf = Vec::new();
         for header in headers.into_iter() {
-            buf.write(&format!("{header}\n").as_bytes()).await.unwrap();
+            buf.write_all(format!("{header}\n").as_bytes())
+                .await
+                .unwrap();
         }
 
-        self.add_attachment("Response Headers", Mime::Txt, buf, extensions)
+        self.add_attachment("Response Headers", Mime::Txt, buf)
             .await;
 
         let mut buf = Vec::new();
         serde_json::to_writer_pretty(&mut buf, &body_v).unwrap();
-        self.add_attachment("Response Body", Mime::ApplicationJson, buf, extensions)
+        self.add_attachment("Response Body", Mime::ApplicationJson, buf)
             .await;
         Ok(())
     }
 
-    async fn log_request(&self, req: &Request, extensions: &mut Extensions) {
-        let body = if let Some(mut body) = req.body().as_deref().map(|b| b.as_bytes()).flatten() {
+    async fn log_request(&self, req: &Request) {
+        let body = if let Some(mut body) = req.body().and_then(|b| b.as_bytes()) {
             if let Ok(json) = serde_json::from_reader(&mut body) {
                 json
             } else {
@@ -131,22 +123,22 @@ impl LoggingMiddleware {
 
         let mut buf = Vec::new();
         for header in headers.into_iter() {
-            buf.write(&format!("{header}\n").as_bytes()).await.unwrap();
+            buf.write_all(format!("{header}\n").as_bytes())
+                .await
+                .unwrap();
         }
 
-        self.add_attachment("Request Headers", Mime::Txt, buf, extensions)
-            .await;
+        self.add_attachment("Request Headers", Mime::Txt, buf).await;
 
         let mut buf = Vec::new();
         match body {
             Value::String(s) => {
-                buf.write(s.as_bytes()).await.unwrap();
-                self.add_attachment("Request Body", Mime::Txt, buf, extensions)
-                    .await;
+                buf.write_all(s.as_bytes()).await.unwrap();
+                self.add_attachment("Request Body", Mime::Txt, buf).await;
             }
             value => {
                 serde_json::to_writer_pretty(&mut buf, &value).unwrap();
-                self.add_attachment("Request Body", Mime::ApplicationJson, buf, extensions)
+                self.add_attachment("Request Body", Mime::ApplicationJson, buf)
                     .await;
             }
         }
@@ -169,7 +161,7 @@ impl Display for Mime {
 }
 
 impl Mime {
-    fn to_ext(&self) -> &'static str {
+    fn as_ext(&self) -> &'static str {
         match self {
             Mime::ApplicationJson => "json",
             Mime::Txt => "txt",

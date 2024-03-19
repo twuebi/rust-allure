@@ -3,7 +3,94 @@ pub mod middleware;
 use serde::{Deserialize, Serialize, Serializer};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 use uuid::Uuid;
+
+pub struct Reporter {
+    test: TestResultBuilder,
+    rx: tokio::sync::mpsc::UnboundedReceiver<Message>,
+    result_tx: tokio::sync::oneshot::Sender<TestResult>,
+}
+
+#[derive(Debug)]
+pub enum Message {
+    StartStep(String),
+    FinalizeStep(Status),
+    AddAttachment(Attachment),
+    Result,
+}
+
+impl Reporter {
+    pub fn new(
+        name: &str,
+        full_name: &str,
+        suite: &str,
+    ) -> (
+        Self,
+        UnboundedSender<Message>,
+        oneshot::Receiver<TestResult>,
+    ) {
+        let test_builder = TestResultBuilder::new(name, full_name, suite);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        (
+            Self {
+                test: test_builder,
+                rx,
+                result_tx,
+            },
+            tx,
+            result_rx,
+        )
+    }
+
+    pub async fn task(mut self) {
+        while let Some(message) = self.rx.recv().await {
+            eprintln!("Received message {:?}", message);
+
+            match message {
+                Message::StartStep(name) => self.start_step(&name),
+                Message::FinalizeStep(status) => self.finalize_step(status),
+                Message::AddAttachment(attachment) => {
+                    if let Some(cs) = self.test.current_step.as_mut() {
+                        cs.attachments.push(attachment)
+                    }
+                }
+                Message::Result => {
+                    let Self {
+                        test,
+                        rx: _,
+                        result_tx,
+                    } = self;
+                    let result = test.build();
+                    result_tx.send(result).unwrap();
+                    eprintln!("Exiting");
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn start_step(&mut self, name: &str) {
+        let _ = self.test.start_step(name).unwrap();
+    }
+
+    pub fn finalize_step(&mut self, status: Status) {
+        self.test.finalize_step(status)
+    }
+
+    pub fn get_result(self) -> TestResult {
+        self.test.build()
+    }
+
+    pub async fn write_result(result: &TestResult, mut target_dir: PathBuf) {
+        target_dir.push(format!("{}-result.json", uuid::Uuid::new_v4()));
+        tokio::fs::write(target_dir, serde_json::to_string(result).unwrap())
+            .await
+            .unwrap();
+    }
+}
 
 #[derive(Deserialize, Serialize, Debug, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -268,16 +355,19 @@ mod test {
           "status": "passed",
           "start": 1682358426014usize,
           "stop": 1682358426014usize,
+            "attachments": [],
           "steps": [
             {
               "name": "Step 1",
               "status": "passed",
+              "attachments": [],
               "start": 1682358426014usize,
               "stop": 1682358426014usize
             },
             {
               "name": "Step 2",
               "status": "passed",
+              "attachments": [],
               "start": 1682358426014usize,
               "stop": 1682358426014usize
             }
