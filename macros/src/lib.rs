@@ -36,7 +36,9 @@ pub fn allure_test(
             return proc_macro::TokenStream::from(e.write_errors());
         }
     };
+    let input_span = func.sig.paren_token.span.span();
     func.sig.output = ReturnType::Default;
+    let old_inps = func.sig.inputs.clone();
     func.sig.inputs = Punctuated::default();
     let sig = func.sig.clone().into_token_stream();
 
@@ -44,23 +46,25 @@ pub fn allure_test(
         #[::tokio::test]
         #sig
     );
-    let fname = func.sig.ident.clone();
+
     let allure_dir = args.allure_dir.unwrap_or("allure-results".to_string());
     let ts = args.test_name.into_token_stream();
     let desc = args.test_description.into_token_stream();
 
-    let outer_body = quote_spanned!(func.sig.span()=> {
-        let (reporter, mut test_helper) = ::untitled::Reporter::new(#ts, #desc, module_path!(), #allure_dir);
+    let outer_body = quote_spanned!(func.block.span()=> {
+        let (reporter, mut test_helper) = ::untitled::reporter::Reporter::new(#ts, #desc, module_path!(), #allure_dir);
         let task_handle = ::tokio::task::spawn(reporter.task());
         inner(&mut test_helper).await;
-        let result = test_helper.consume_result().await.unwrap();
-        test_helper.write_result(&result).await;
+        let _ = test_helper.fetch_result().await.unwrap();
+        test_helper.write_result().await.unwrap();
     });
     // eprintln!("{outer_body}");
     let block = func.block.clone().into_token_stream();
+    let inputx = quote_spanned!(input_span=> #old_inps);
+    let headerx = quote_spanned!(func.sig.span()=> async fn inner(#inputx) -> anyhow::Result<()>);
 
-    let body = quote_spanned!(func.block.span()=>
-        async fn inner(test_helper: &mut TestHelper) -> anyhow::Result<()>
+    let body = quote_spanned!(func.span()=>
+        #headerx
         {#block
         Ok(())}
     );
@@ -107,20 +111,30 @@ pub fn allure_step(
     };
 
     let desc = args.step_description.into_token_stream();
-    let block = func.block.clone().into_token_stream();
+    let block = TokenStream::from_iter(
+        func.block
+            .stmts
+            .clone()
+            .into_iter()
+            .map(|t| t.into_token_stream()),
+    );
+    // let block = func.block.clone().into_token_stream();
 
     let body = quote_spanned!(func.block.span()=> {
         test_helper.start_step(&format!("{}: {}",#step_name, #desc)).await?;
-        let client = test_helper.client();
-        let clos = || async move #block;
-        let res: Result<(), String> = clos().await;
+        async fn inner2(addr: SocketAddr, test_helper: &mut TestHelper) -> anyhow::Result<()> {
+            #block
+        }
+
+        let res: anyhow::Result<()> = inner2(addr, test_helper).await;
         match res {
             Ok(_) => {
-                test_helper.finalize_step(untitled::Status::Passed).await?;
+                test_helper.finalize_step(untitled::reporter::models::Status::Passed).await?;
             }
             Err(err) => {
                 eprintln!("{}", err);
-                test_helper.finalize_step(untitled::Status::Failed).await?;
+
+                test_helper.finalize_step(untitled::reporter::models::Status::Failed).await?;
                 return Err(anyhow::anyhow!(err.to_string()))
             }
         }
@@ -131,6 +145,6 @@ pub fn allure_step(
     out.extend(header);
     out.extend(body);
 
-    // eprintln!("{out}");
+    eprintln!("{out}");
     out.into()
 }
