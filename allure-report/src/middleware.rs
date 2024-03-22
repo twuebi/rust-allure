@@ -35,9 +35,9 @@ impl Middleware for LoggingMiddleware {
 }
 
 impl LoggingMiddleware {
-    pub async fn new(allure_dir: PathBuf, tx: UnboundedSender<Message>) -> Self {
+    pub fn new(allure_dir: PathBuf, tx: UnboundedSender<Message>) -> Self {
         if !allure_dir.exists() {
-            tokio::fs::create_dir_all(&allure_dir).await.unwrap();
+            std::fs::create_dir_all(&allure_dir).unwrap();
         }
         Self { allure_dir, tx }
     }

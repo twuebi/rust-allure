@@ -1,5 +1,8 @@
 pub mod middleware;
 
+use crate::middleware::LoggingMiddleware;
+use reqwest::Client;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use serde::{Deserialize, Serialize, Serializer};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,10 +10,76 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+mod prelude {}
+
 pub struct Reporter {
     test: TestResultBuilder,
     rx: tokio::sync::mpsc::UnboundedReceiver<Message>,
     result_tx: tokio::sync::oneshot::Sender<TestResult>,
+}
+
+pub struct TestHelper {
+    tx: UnboundedSender<Message>,
+    result_rx: Option<oneshot::Receiver<TestResult>>,
+    allure_dir: String,
+    client: ClientWithMiddleware,
+}
+
+impl TestHelper {
+    pub async fn consume_result(&mut self) -> anyhow::Result<TestResult> {
+        self.tx.send(Message::Result)?;
+        Ok(self
+            .result_rx
+            .take()
+            .ok_or(anyhow::anyhow!("Already got results before."))?
+            .await?)
+    }
+
+    pub fn client(&mut self) -> ClientWithMiddleware {
+        self.client.clone()
+    }
+
+    pub fn equals<T: PartialEq>(a: T, b: &T) -> Result<(), ()> {
+        if a.eq(b) {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn equal_json(
+        expected: serde_json::Value,
+        actual: &serde_json::Value,
+    ) -> Result<(), String> {
+        if expected.eq(actual) {
+            Ok(())
+        } else {
+            let expected = serde_json::to_string_pretty(&expected).unwrap();
+            let actual = serde_json::to_string_pretty(&actual).unwrap();
+            let diff = similar::TextDiff::from_lines(&expected, &actual);
+            Err(diff.unified_diff().to_string())
+        }
+    }
+
+    // TODO: add description?
+    pub async fn start_step(&mut self, name: &str) -> anyhow::Result<()> {
+        self.tx.send(Message::StartStep(name.into()))?;
+        Ok(())
+    }
+
+    // TODO: add fields?
+    pub async fn finalize_step(&mut self, status: Status) -> anyhow::Result<()> {
+        self.tx.send(Message::FinalizeStep(status))?;
+        Ok(())
+    }
+
+    pub async fn write_result(&self, result: &TestResult) {
+        let mut target_dir = PathBuf::from(&self.allure_dir);
+        target_dir.push(format!("{}-result.json", Uuid::new_v4()));
+        tokio::fs::write(target_dir, serde_json::to_string(result).unwrap())
+            .await
+            .unwrap();
+    }
 }
 
 #[derive(Debug)]
@@ -22,26 +91,30 @@ pub enum Message {
 }
 
 impl Reporter {
-    pub fn new(
-        name: &str,
-        full_name: &str,
-        suite: &str,
-    ) -> (
-        Self,
-        UnboundedSender<Message>,
-        oneshot::Receiver<TestResult>,
-    ) {
+    pub fn new(name: &str, full_name: &str, suite: &str, allure_dir: &str) -> (Self, TestHelper) {
         let test_builder = TestResultBuilder::new(name, full_name, suite);
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        let reqwest_client = Client::builder().build().unwrap();
+
+        let client = ClientBuilder::new(reqwest_client)
+            .with(LoggingMiddleware::new(
+                PathBuf::from(allure_dir),
+                tx.clone(),
+            ))
+            .build();
         (
             Self {
                 test: test_builder,
                 rx,
                 result_tx,
             },
-            tx,
-            result_rx,
+            TestHelper {
+                tx,
+                result_rx: Some(result_rx),
+                allure_dir: allure_dir.into(),
+                client,
+            },
         )
     }
 
@@ -82,13 +155,6 @@ impl Reporter {
 
     pub fn get_result(self) -> TestResult {
         self.test.build()
-    }
-
-    pub async fn write_result(result: &TestResult, mut target_dir: PathBuf) {
-        target_dir.push(format!("{}-result.json", uuid::Uuid::new_v4()));
-        tokio::fs::write(target_dir, serde_json::to_string(result).unwrap())
-            .await
-            .unwrap();
     }
 }
 
