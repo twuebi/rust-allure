@@ -1,3 +1,4 @@
+use crate::reporter::Mime;
 use crate::TestHelper;
 use anyhow::anyhow;
 use std::fmt::Debug;
@@ -37,7 +38,7 @@ where
     Z: PartialEq<T> + Debug,
     T: PartialEq<Z> + Debug,
 {
-    pub fn is_equals_to(&self, other_thing: Z) -> anyhow::Result<()> {
+    pub async fn is_equals_to(&mut self, other_thing: Z) -> anyhow::Result<()> {
         if other_thing.eq(self.thing.as_ref().unwrap()) {
             Ok(())
         } else {
@@ -45,10 +46,15 @@ where
             let actual = format!("{:#?}", other_thing);
 
             let diff = similar::TextDiff::from_lines(&expected, &actual);
-            Err(anyhow!(diff
-                .unified_diff()
-                .missing_newline_hint(false)
-                .to_string()))
+            let diff = diff.unified_diff().missing_newline_hint(false).to_string();
+            self.helper
+                .attachment(
+                    &format!("Failed: ADD STEP HERE"),
+                    Mime::Txt,
+                    diff.as_bytes(),
+                )
+                .await?;
+            Err(anyhow!(diff))
         }
     }
 }

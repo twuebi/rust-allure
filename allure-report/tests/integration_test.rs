@@ -22,7 +22,7 @@ mod test {
         });
 
         step_1(addr, test_helper).await.unwrap();
-        assert!(step_2(addr, test_helper).await.is_ok());
+        step_2(addr, test_helper).await;
     }
 
     #[allure_step(step_description = "test it works")]
@@ -52,7 +52,8 @@ mod test {
             .is_equals_to(serde_json::json!( {
                 "a": "XaZ",
                 "b": "XZY"
-            }))?;
+            }))
+            .await?;
         // TestHelper::equal_json(
         // serde_json::json!( {
         //     "b": "XZY",

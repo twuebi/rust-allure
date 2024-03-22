@@ -47,7 +47,7 @@ impl TestHelper {
     }
     pub async fn fetch_result(&mut self) -> anyhow::Result<&TestResult> {
         assert!(
-            self.result_rx.is_none() && self.result.is_none(),
+            !(self.result_rx.is_none() && self.result.is_none()),
             "Result was fetched but never stored, something's very wrong."
         );
 
