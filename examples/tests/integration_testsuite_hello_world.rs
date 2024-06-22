@@ -21,7 +21,7 @@ async fn test_feature_hello_world(test_helper: &mut TestHelper) -> anyhow::Resul
     make_sure_hello_world_works(addr, test_helper).await?;
 }
 
-#[allure_step(step_description = "Test the server responds 'Hello, World!'.")]
+#[allure_step(step_description = "Test the server responds 'Hello World!'.")]
 pub async fn make_sure_hello_world_works(
     addr: SocketAddr,
     test_helper: &mut TestHelper,
