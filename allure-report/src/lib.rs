@@ -6,20 +6,21 @@ pub mod reporter;
 use crate::asserter::{Asserter, WithoutThing};
 use crate::helpers::write_attachment;
 use crate::reporter::Mime;
+use allure_models::{Attachment, Status, TestResult};
 use anyhow::anyhow;
-use reporter::models::{Attachment, Status, TestResult};
 use reporter::Message;
 use reqwest_middleware::ClientWithMiddleware;
 use std::fmt::Debug;
-use std::marker::PhantomData;
+
 use std::path::PathBuf;
+
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
 pub mod prelude {
+    pub use allure_macros::{allure_step, allure_test};
     pub use anyhow;
-    pub use macros::{allure_step, allure_test};
     pub use reqwest;
     pub use tokio;
 }
@@ -33,17 +34,21 @@ pub struct TestHelper {
 }
 
 impl TestHelper {
+    pub fn client(&self) -> ClientWithMiddleware {
+        self.client.clone()
+    }
+
     pub fn asserter<Z, T>(&mut self) -> Asserter<Z, T, WithoutThing>
     where
         Z: PartialEq<T> + Debug,
         T: PartialEq<Z> + Debug,
     {
-        return Asserter {
+        Asserter {
             helper: self,
             thing: None,
             _phantom: Default::default(),
             _phantom2: Default::default(),
-        };
+        }
     }
     pub async fn fetch_result(&mut self) -> anyhow::Result<&TestResult> {
         assert!(
@@ -57,18 +62,6 @@ impl TestHelper {
         }
 
         Ok(self.result.as_ref().unwrap())
-    }
-
-    pub fn client(&self) -> ClientWithMiddleware {
-        self.client.clone()
-    }
-
-    pub fn equals<T: PartialEq>(a: T, b: &T) -> Result<(), ()> {
-        if a.eq(b) {
-            Ok(())
-        } else {
-            Err(())
-        }
     }
 
     pub fn equal_json(
@@ -106,7 +99,7 @@ impl TestHelper {
         let of = write_attachment(mime, content, self.allure_dir.as_str().into()).await?;
         self.tx.send(Message::AddAttachment(Attachment {
             name: name.into(),
-            source: of.into(),
+            source: of,
             r#type: mime.to_string().to_string(),
         }))?;
         Ok(())
@@ -115,7 +108,7 @@ impl TestHelper {
     pub async fn write_result(&self) -> anyhow::Result<()> {
         if let Some(r) = self.result.as_ref() {
             let mut target_dir = PathBuf::from(&self.allure_dir);
-            target_dir.push(format!("{}-result.json", Uuid::new_v4()));
+            target_dir.push(format!("{}-result.json", Uuid::now_v7()));
             tokio::fs::write(target_dir, serde_json::to_string(r).unwrap()).await?;
         } else {
             anyhow::bail!("Result is not fetched, fetch result before trying to write it.");

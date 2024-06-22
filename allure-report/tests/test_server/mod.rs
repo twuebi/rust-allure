@@ -1,5 +1,5 @@
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -11,7 +11,9 @@ pub struct Server {
 
 impl Server {
     pub fn new(port: u16) -> Self {
-        let app = Router::new().route("/", get(root)).route("/json", get(jsn));
+        let app = Router::new()
+            .route("/", get(root))
+            .route("/json", post(jsn));
         let addr = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
         Self { addr, router: app }
     }

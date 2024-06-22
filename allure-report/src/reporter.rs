@@ -1,12 +1,10 @@
-use crate::middleware::LoggingMiddleware;
+use crate::middleware::AllureConnectorMiddleware;
 use crate::TestHelper;
-use models::{Attachment, Status, TestResult, TestResultBuilder};
+use allure_models::{Attachment, Status, TestResult, TestResultBuilder};
 use reqwest::Client;
 use reqwest_middleware::ClientBuilder;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
-
-pub mod models;
 
 pub struct Reporter {
     test: TestResultBuilder,
@@ -30,7 +28,7 @@ impl Reporter {
         let reqwest_client = Client::builder().build().unwrap();
 
         let client = ClientBuilder::new(reqwest_client)
-            .with(LoggingMiddleware::new(
+            .with(AllureConnectorMiddleware::new(
                 PathBuf::from(allure_dir),
                 tx.clone(),
             ))

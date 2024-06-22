@@ -87,9 +87,9 @@ pub struct TestResult {
 impl TestResult {
     pub fn new(full_name: String, name: String) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
-            history_id: Uuid::new_v4(),
-            test_case_id: Uuid::new_v4(),
+            uuid: Uuid::now_v7(),
+            history_id: Uuid::now_v7(),
+            test_case_id: Uuid::now_v7(),
             full_name,
             name,
             links: vec![],
@@ -119,7 +119,7 @@ pub struct TestResultBuilder {
 impl TestResultBuilder {
     pub fn new(name: &str, full_name: &str, suite: &str) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::now_v7(),
             full_name: full_name.into(),
             name: name.into(),
             links: vec![],
@@ -174,8 +174,8 @@ impl TestResultBuilder {
         } = self;
         TestResult {
             uuid,
-            history_id: Uuid::new_v4(),
-            test_case_id: Uuid::new_v4(),
+            history_id: Uuid::now_v7(),
+            test_case_id: Uuid::now_v7(),
             full_name,
             name,
             links,
@@ -213,7 +213,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::reporter::models::TestResult;
+    use super::TestResult;
 
     #[test]
     fn test_roundtrip() {

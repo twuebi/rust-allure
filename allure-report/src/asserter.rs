@@ -23,7 +23,7 @@ where
     Z: PartialEq<T> + Debug,
     T: PartialEq<Z> + Debug,
 {
-    pub fn assert_that(mut self, thing: T) -> Asserter<'c, Z, T, WithThing> {
+    pub fn assert_that(self, thing: T) -> Asserter<'c, Z, T, WithThing> {
         Asserter {
             helper: self.helper,
             thing: Some(thing),
@@ -48,11 +48,7 @@ where
             let diff = similar::TextDiff::from_lines(&expected, &actual);
             let diff = diff.unified_diff().missing_newline_hint(false).to_string();
             self.helper
-                .attachment(
-                    &format!("Failed: ADD STEP HERE"),
-                    Mime::Txt,
-                    diff.as_bytes(),
-                )
+                .attachment("Failed: ADD STEP HERE", Mime::Txt, diff.as_bytes())
                 .await?;
             Err(anyhow!(diff))
         }

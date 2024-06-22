@@ -1,25 +1,24 @@
-use crate::reporter::models::Attachment;
 use crate::reporter::{Message, Mime};
+use allure_models::Attachment;
 use http::HeaderMap;
 use reqwest::{Request, Response};
 use reqwest_middleware::{Middleware, Next, Result};
 use serde_json::Value;
 use std::path::PathBuf;
-use task_local_extensions::Extensions;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::UnboundedSender;
 
-pub struct LoggingMiddleware {
+pub struct AllureConnectorMiddleware {
     allure_dir: PathBuf,
     tx: UnboundedSender<Message>,
 }
 
 #[async_trait::async_trait]
-impl Middleware for LoggingMiddleware {
+impl Middleware for AllureConnectorMiddleware {
     async fn handle(
         &self,
         req: Request,
-        extensions: &mut Extensions,
+        extensions: &mut http::Extensions,
         next: Next<'_>,
     ) -> Result<Response> {
         self.log_request(&req).await?;
@@ -33,7 +32,7 @@ impl Middleware for LoggingMiddleware {
     }
 }
 
-impl LoggingMiddleware {
+impl AllureConnectorMiddleware {
     pub fn new(allure_dir: PathBuf, tx: UnboundedSender<Message>) -> Self {
         if !allure_dir.exists() {
             std::fs::create_dir_all(&allure_dir).unwrap();
@@ -53,7 +52,7 @@ impl LoggingMiddleware {
         Ok(())
     }
 
-    async fn write_attachment(&self, mime: Mime, content: &Vec<u8>) -> anyhow::Result<PathBuf> {
+    async fn write_attachment(&self, mime: Mime, content: &[u8]) -> anyhow::Result<PathBuf> {
         crate::helpers::write_attachment(mime, content, self.allure_dir.clone()).await
     }
 
