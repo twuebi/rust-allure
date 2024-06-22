@@ -3,6 +3,10 @@ mod helpers;
 pub mod middleware;
 pub mod reporter;
 
+pub mod models {
+    pub use allure_models::*;
+}
+
 use crate::asserter::{Asserter, WithoutThing};
 use crate::helpers::write_attachment;
 use crate::reporter::Mime;
@@ -14,14 +18,15 @@ use std::fmt::Debug;
 
 use std::path::PathBuf;
 
+pub use allure_macros::{allure_step, allure_test};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
 pub mod prelude {
-    pub use allure_macros::{allure_step, allure_test};
     pub use anyhow;
     pub use reqwest;
+    pub use reqwest_middleware;
     pub use tokio;
 }
 
@@ -43,14 +48,9 @@ impl TestHelper {
         Z: PartialEq<T> + Debug,
         T: PartialEq<Z> + Debug,
     {
-        Asserter {
-            helper: self,
-            thing: None,
-            _phantom: Default::default(),
-            _phantom2: Default::default(),
-        }
+        Asserter::new(self)
     }
-    pub async fn fetch_result(&mut self) -> anyhow::Result<&TestResult> {
+    pub async fn ___private_fetch_result(&mut self) -> anyhow::Result<&TestResult> {
         assert!(
             !(self.result_rx.is_none() && self.result.is_none()),
             "Result was fetched but never stored, something's very wrong."
@@ -79,13 +79,13 @@ impl TestHelper {
     }
 
     // TODO: add description?
-    pub async fn start_step(&mut self, name: &str) -> anyhow::Result<()> {
+    pub async fn ___private_start_step(&mut self, name: &str) -> anyhow::Result<()> {
         self.tx.send(Message::StartStep(name.into()))?;
         Ok(())
     }
 
     // TODO: add fields?
-    pub async fn finalize_step(&mut self, status: Status) -> anyhow::Result<()> {
+    pub async fn ___private_finalize_step(&mut self, status: Status) -> anyhow::Result<()> {
         self.tx.send(Message::FinalizeStep(status))?;
         Ok(())
     }
@@ -105,7 +105,7 @@ impl TestHelper {
         Ok(())
     }
 
-    pub async fn write_result(&self) -> anyhow::Result<()> {
+    pub async fn ___private_write_result(&self) -> anyhow::Result<()> {
         if let Some(r) = self.result.as_ref() {
             let mut target_dir = PathBuf::from(&self.allure_dir);
             target_dir.push(format!("{}-result.json", Uuid::now_v7()));

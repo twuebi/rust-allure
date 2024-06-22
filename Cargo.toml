@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
 
-members = ["./allure-report", "./allure-macros", "./allure-models"]
+members = ["./allure-report", "./allure-macros", "./allure-models", "./examples"]
 

@@ -49,12 +49,12 @@ impl Reporter {
         )
     }
 
-    pub async fn task(mut self) {
+    pub async fn task(mut self) -> anyhow::Result<()> {
         while let Some(message) = self.rx.recv().await {
-            eprintln!("Received message {:?}", message);
+            tracing::debug!("Received message {:?}", message);
 
             match message {
-                Message::StartStep(name) => self.start_step(&name),
+                Message::StartStep(name) => self.start_step(&name)?,
                 Message::FinalizeStep(status) => self.finalize_step(status),
                 Message::AddAttachment(attachment) => {
                     if let Some(cs) = self.test.current_step.as_mut() {
@@ -69,15 +69,17 @@ impl Reporter {
                     } = self;
                     let result = test.build();
                     result_tx.send(result).unwrap();
-                    eprintln!("Exiting");
+                    tracing::info!("Exiting");
                     break;
                 }
             }
         }
+        Ok(())
     }
 
-    pub fn start_step(&mut self, name: &str) {
-        let _ = self.test.start_step(name).unwrap();
+    pub fn start_step(&mut self, name: &str) -> anyhow::Result<()> {
+        let _ = self.test.start_step(name)?;
+        Ok(())
     }
 
     pub fn finalize_step(&mut self, status: Status) {

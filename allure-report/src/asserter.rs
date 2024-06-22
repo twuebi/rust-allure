@@ -13,21 +13,30 @@ where
     Z: PartialEq<T> + Debug,
     T: PartialEq<Z> + Debug,
 {
-    pub helper: &'c mut TestHelper,
-    pub thing: Option<T>,
-    pub _phantom: PhantomData<X>,
-    pub _phantom2: PhantomData<Z>,
+    helper: &'c mut TestHelper,
+    thing: Option<T>,
+    _phantom: PhantomData<X>,
+    _phantom2: PhantomData<Z>,
 }
+
 impl<'c, Z, T> Asserter<'c, Z, T, WithoutThing>
 where
     Z: PartialEq<T> + Debug,
     T: PartialEq<Z> + Debug,
 {
+    pub fn new(helper: &'c mut TestHelper) -> Asserter<'c, Z, T, WithoutThing> {
+        Asserter {
+            helper,
+            thing: None,
+            _phantom: Default::default(),
+            _phantom2: Default::default(),
+        }
+    }
     pub fn assert_that(self, thing: T) -> Asserter<'c, Z, T, WithThing> {
         Asserter {
             helper: self.helper,
             thing: Some(thing),
-            _phantom: PhantomData,
+            _phantom: Default::default(),
             _phantom2: Default::default(),
         }
     }
@@ -38,7 +47,12 @@ where
     Z: PartialEq<T> + Debug,
     T: PartialEq<Z> + Debug,
 {
-    pub async fn is_equals_to(&mut self, other_thing: Z) -> anyhow::Result<()> {
+    pub async fn is_equals_to(
+        &mut self,
+        other_thing: Z,
+        description: Option<&str>,
+    ) -> anyhow::Result<()> {
+        // We are WithThing so this is safe
         if other_thing.eq(self.thing.as_ref().unwrap()) {
             Ok(())
         } else {
@@ -48,7 +62,11 @@ where
             let diff = similar::TextDiff::from_lines(&expected, &actual);
             let diff = diff.unified_diff().missing_newline_hint(false).to_string();
             self.helper
-                .attachment("Failed: ADD STEP HERE", Mime::Txt, diff.as_bytes())
+                .attachment(
+                    &format!("Failed: {}", description.unwrap_or("equality comparison.")),
+                    Mime::Txt,
+                    diff.as_bytes(),
+                )
                 .await?;
             Err(anyhow!(diff))
         }

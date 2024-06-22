@@ -40,10 +40,10 @@ impl AllureConnectorMiddleware {
         Self { allure_dir, tx }
     }
 
+    #[tracing::instrument(skip(self, content))]
     async fn add_attachment(&self, name: &str, mime: Mime, content: Vec<u8>) -> anyhow::Result<()> {
         let of_name = self.write_attachment(mime, &content).await?;
 
-        eprintln!("sending attachment");
         self.tx.send(Message::AddAttachment(Attachment {
             name: name.to_string(),
             source: of_name,
@@ -88,7 +88,7 @@ impl AllureConnectorMiddleware {
             .await?;
 
         let mut buf = Vec::new();
-        serde_json::to_writer_pretty(&mut buf, &body_v).unwrap();
+        serde_json::to_writer_pretty(&mut buf, &body_v)?;
         self.add_attachment("Response Body", Mime::ApplicationJson, buf)
             .await?;
         Ok(())

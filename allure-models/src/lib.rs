@@ -287,7 +287,7 @@ mod test {
           ]
         });
         let parsed: TestResult = serde_json::from_value(val.clone()).unwrap();
-        let val2 = serde_json::to_value(&parsed).unwrap();
+        let val2 = serde_json::to_value(parsed).unwrap();
         assert_eq!(val, val2);
     }
 }

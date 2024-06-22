@@ -1,8 +1,14 @@
-# allure-rust
+pub mod helpers;
 
-HTTP integration testing in Rust producing [Allure](https://docs.qameta.io/allure/) compatible outputs.
+use std::net::SocketAddr;
 
-```rust
+use allure_report::prelude::*;
+use allure_report::{allure_step, allure_test};
+
+use crate::helpers::server::Server;
+use allure_report::prelude::reqwest::Method;
+use allure_report::TestHelper;
+
 // Unnamed tests take the function name as the test name
 #[allure_test(
     test_description = "This test makes sure that our server hello worlds in proper manner."
@@ -34,21 +40,3 @@ pub async fn make_sure_hello_world_works(
         .await?;
     Ok(res)
 }
-
-```
-
-<p>
-<img alt="example_image.png" height="550" src="example_image.png" width="855"/>
-</p>
-
-More examples can be found under [examples](./examples), to explore them simply:
-
-```bash
-$ cd examples
-$ cargo test # or cargo nextest r
-...
-$ allure serve allure-results
-```
-
-and wait for your browser to open.
-

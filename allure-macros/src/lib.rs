@@ -10,7 +10,7 @@ extern crate proc_macro;
 
 #[derive(Debug, FromMeta)]
 struct MacroArgs {
-    test_name: String,
+    test_name: Option<String>,
     test_description: String,
     allure_dir: Option<String>,
 }
@@ -39,20 +39,26 @@ pub fn allure_test(
     );
 
     let allure_dir = args.allure_dir.unwrap_or("allure-results".to_string());
-    let ts = args.test_name.into_token_stream();
+    let ts = args
+        .test_name
+        .unwrap_or(func.sig.ident.to_string())
+        .into_token_stream();
     let desc = args.test_description.into_token_stream();
 
-    let outer_body = quote_spanned!(func.block.span()=> {
-        let (reporter, mut helper) = ::untitled::reporter::Reporter::new(#ts, #desc, module_path!(), #allure_dir);
-        let task_handle = ::tokio::task::spawn(reporter.task());
-        inner(&mut helper).await;
-        let _ = helper.fetch_result().await.unwrap();
-        helper.write_result().await.unwrap();
-    });
-    // eprintln!("{outer_body}");
     let block = func.block.clone().into_token_stream();
     let inputx = quote_spanned!(input_span=> #old_inps);
-    let headerx = quote_spanned!(func.sig.span()=> async fn inner(#inputx) -> anyhow::Result<()>);
+    let inner_fn_name = create_inner_func_name(&func);
+    let headerx =
+        quote_spanned!(func.sig.span()=> async fn #inner_fn_name(#inputx) -> anyhow::Result<()>);
+
+    let outer_body = quote_spanned!(func.block.span()=> {
+        let (reporter, mut helper) = ::allure_report::reporter::Reporter::new(#ts, #desc, module_path!(), #allure_dir);
+        let _task_handle = ::tokio::task::spawn(reporter.task());
+        let res = #inner_fn_name(&mut helper).await;
+        let _ = helper.___private_fetch_result().await.unwrap();
+        helper.___private_write_result().await.unwrap();
+        res.expect("Test failed.");
+    });
 
     let body = quote_spanned!(func.span()=>
         #headerx
@@ -65,7 +71,6 @@ pub fn allure_test(
     out.extend(outer_body);
     out.extend(body);
 
-    eprintln!("{out}");
     out.into()
 }
 
@@ -86,11 +91,26 @@ pub fn allure_step(
 
     let func = syn::parse_macro_input!(input as ItemFn);
 
-    let signature = func.sig.to_token_stream();
+    let mut signature = func.vis.to_token_stream();
+    signature.extend(func.sig.to_token_stream());
     let step_name = func.sig.ident.to_string();
 
     let arguments_with_types = func.sig.inputs.to_token_stream();
-
+    match func.sig.output.clone() {
+        ReturnType::Default => {}
+        ReturnType::Type(_, x) => {
+            let r = x.as_ref();
+            // assert that Type is anyhow::Result
+            if let syn::Type::Path(p) = r {
+                if p.path.segments.len() == 1 {
+                    let seg = &p.path.segments[0];
+                    assert_eq!(seg.ident.to_string(), "Result");
+                    panic!("Only Result return types are supported here.");
+                }
+            }
+        }
+    };
+    let output = func.sig.output.to_token_stream();
     let block = TokenStream::from_iter(
         func.block
             .stmts
@@ -106,6 +126,39 @@ pub fn allure_step(
     } else {
         quote! {}
     };
+
+    let inner_fn_name = create_inner_func_name(&func);
+
+    let test_fn = quote! { pub async fn #inner_fn_name (#arguments_with_types) #output {
+                                       #block
+                                     }
+    };
+    let invocation =
+        quote! { let res: anyhow::Result<_> = #obj #inner_fn_name (#(#fn_inputs),*).await; };
+    let args = args.step_description.into_token_stream();
+    let body = quote_spanned!(func.block.span()=> {
+        test_helper.___private_start_step(&format!("{}: {}", #step_name, #args)).await?;
+        #invocation
+        match res {
+            Ok(x) => {
+                test_helper.___private_finalize_step(::allure_report::models::Status::Passed).await?;
+                Ok(x)
+            }
+            Err(err) => {
+                test_helper.___private_finalize_step(::allure_report::models::Status::Failed).await?;
+                Err(anyhow::anyhow!(err.to_string()))
+            }
+        }
+    });
+
+    let mut out = TokenStream::new();
+    out.extend(test_fn);
+    out.extend(signature);
+    out.extend(body);
+    out.into()
+}
+
+fn create_inner_func_name(func: &ItemFn) -> TokenStream {
     let mut tokens = TokenStream::new();
     tokens.extend(
         proc_macro2::Ident::new(
@@ -116,35 +169,7 @@ pub fn allure_step(
     );
 
     let inner_fn_name = quote! { #tokens };
-
-    let test_fn = quote! { async fn #inner_fn_name (#arguments_with_types) -> anyhow::Result<()> {
-                                       #block
-                                     }
-    };
-    let invocation =
-        quote! { let res: anyhow::Result<()> = #obj #inner_fn_name (#(#fn_inputs),*).await; };
-    let args = args.step_description.into_token_stream();
-    let body = quote_spanned!(func.block.span()=> {
-        test_helper.start_step(&format!("{}: {}",#step_name, #args)).await?;
-        #invocation
-        match res {
-            Ok(_) => {
-                test_helper.finalize_step(untitled::reporter::models::Status::Passed).await?;
-                Ok(())
-            }
-            Err(err) => {
-                test_helper.finalize_step(untitled::reporter::models::Status::Failed).await?;
-                Err(anyhow::anyhow!(err.to_string()))
-            }
-        }
-    });
-
-    let mut out = TokenStream::new();
-    out.extend(test_fn);
-    out.extend(signature);
-    out.extend(body);
-
-    out.into()
+    inner_fn_name
 }
 
 fn parse_args<T: FromMeta>(args: proc_macro::TokenStream) -> Result<T, proc_macro::TokenStream> {
